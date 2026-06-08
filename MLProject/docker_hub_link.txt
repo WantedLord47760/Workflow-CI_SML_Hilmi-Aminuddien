@@ -1,8 +1,1 @@
-ISI DENGAN LINK DOCKER HUB IMAGE ANDA
-
-Format: https://hub.docker.com/r/USERNAME_DOCKERHUB_ANDA/heart-disease-model
-
-Contoh: https://hub.docker.com/r/hilmiaminuddien/heart-disease-model
-
-Link ini hanya tersedia setelah workflow GitHub Actions Kriteria 3 berhasil dijalankan
-dan Docker image ter-push ke Docker Hub.
+https://hub.docker.com/r/hilmiaminuddien/heart-disease-model
