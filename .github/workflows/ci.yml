@@ -50,10 +50,7 @@ jobs:
       - name: Debug mlruns structure
         run: |
           echo "=== Struktur mlruns ==="
-          find mlruns -type f -name "*.yaml" | head -20
-          echo ""
-          echo "=== Daftar folder di mlruns ==="
-          ls -la mlruns/
+          find mlruns -type d | head -20
 
       # ------------------------------------------------------------------ #
       # Step 6: Upload artefak model ke GitHub (Actions artifact)
@@ -66,21 +63,18 @@ jobs:
           retention-days: 30
 
       # ------------------------------------------------------------------ #
-      # Step 7: Cari model path & Build Docker Image
+      # Step 7: Salin model artifact ke folder MLProject untuk Docker build
       # ------------------------------------------------------------------ #
-      - name: Build Docker Image
+      - name: Copy model to MLProject folder
         run: |
-          # Gunakan Python untuk cari model path yang benar
+          # Cari path model menggunakan Python
           MODEL_PATH=$(python << 'EOF'
           import os, sys
-
           mlruns_dir = "mlruns"
-          # Iterasi semua experiment folder (kecuali '0' = Default)
           for exp_id in sorted(os.listdir(mlruns_dir)):
               if exp_id == "0" or not os.path.isdir(os.path.join(mlruns_dir, exp_id)):
                   continue
               exp_path = os.path.join(mlruns_dir, exp_id)
-              # Iterasi semua run di experiment ini
               for run_id in os.listdir(exp_path):
                   if run_id in ("meta.yaml", "datasets") or not os.path.isdir(os.path.join(exp_path, run_id)):
                       continue
@@ -88,24 +82,27 @@ jobs:
                   if os.path.exists(artifact_model):
                       print(f"{exp_id}/{run_id}")
                       sys.exit(0)
-          # Fallback: cari di mana saja ada folder 'model' di artifacts
-          for root, dirs, files in os.walk(mlruns_dir):
-              if os.path.basename(root) == "model" and "MLmodel" in files:
-                  parts = root.replace("mlruns/", "").split("/")
-                  if len(parts) >= 3:
-                      print(f"{parts[0]}/{parts[1]}")
-                      sys.exit(0)
           EOF
           )
-          echo "Found model at: mlruns/$MODEL_PATH/artifacts/model"
-          # Build docker image
-          mlflow models build-docker \
-            -m "mlruns/$MODEL_PATH/artifacts/model" \
-            -n "${{ secrets.DOCKER_USERNAME }}/heart-disease-model:latest" \
-            --enable-mlserver
+          echo "Model path: mlruns/$MODEL_PATH/artifacts/model"
+          # Salin model ke folder MLProject agar bisa di-COPY ke Docker image
+          cp -r mlruns/$MODEL_PATH/artifacts/model MLProject/model_artifact
+          echo "MODEL_PATH=$MODEL_PATH" >> $GITHUB_ENV
 
       # ------------------------------------------------------------------ #
-      # Step 8: Login ke Docker Hub
+      # Step 8: Build Docker Image menggunakan Dockerfile custom (Python 3.12)
+      # ------------------------------------------------------------------ #
+      - name: Build Docker Image
+        run: |
+          cd MLProject
+          docker build \
+            -t ${{ secrets.DOCKER_USERNAME }}/heart-disease-model:latest \
+            -t ${{ secrets.DOCKER_USERNAME }}/heart-disease-model:run-${{ github.run_number }} \
+            .
+          echo "Docker image berhasil dibuild!"
+
+      # ------------------------------------------------------------------ #
+      # Step 9: Login ke Docker Hub
       # ------------------------------------------------------------------ #
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -114,17 +111,19 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       # ------------------------------------------------------------------ #
-      # Step 9: Push Docker Image ke Docker Hub
+      # Step 10: Push Docker Image ke Docker Hub
       # ------------------------------------------------------------------ #
       - name: Push Docker Image
         run: |
           docker push ${{ secrets.DOCKER_USERNAME }}/heart-disease-model:latest
-          echo "Docker image berhasil di-push!"
-          echo "https://hub.docker.com/r/${{ secrets.DOCKER_USERNAME }}/heart-disease-model" > MLProject/docker_hub_link.txt
-          cat MLProject/docker_hub_link.txt
+          docker push ${{ secrets.DOCKER_USERNAME }}/heart-disease-model:run-${{ github.run_number }}
+          echo "=== Docker image berhasil di-push! ==="
+          LINK="https://hub.docker.com/r/${{ secrets.DOCKER_USERNAME }}/heart-disease-model"
+          echo $LINK
+          echo $LINK > MLProject/docker_hub_link.txt
 
       # ------------------------------------------------------------------ #
-      # Step 10: Commit docker_hub_link.txt ke repo
+      # Step 11: Commit docker_hub_link.txt ke repo
       # ------------------------------------------------------------------ #
       - name: Commit Docker Hub Link
         run: |
