@@ -16,39 +16,27 @@ jobs:
       # Step 1: Checkout kode
       # ------------------------------------------------------------------ #
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       # ------------------------------------------------------------------ #
       # Step 2: Setup Python
       # ------------------------------------------------------------------ #
       - name: Setup Python 3.12
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       # ------------------------------------------------------------------ #
-      # Step 3: Install Miniconda
+      # Step 3: Install MLflow dan dependencies (tanpa Conda agar lebih cepat)
       # ------------------------------------------------------------------ #
-      - name: Install Miniconda
-        uses: conda-incubator/setup-miniconda@v2
-        with:
-          auto-update-conda: true
-          python-version: '3.12'
-          activate-environment: heart-disease-env
-
-      # ------------------------------------------------------------------ #
-      # Step 4: Install MLflow dan dependencies
-      # ------------------------------------------------------------------ #
-      - name: Install MLflow
-        shell: bash -l {0}
+      - name: Install Dependencies
         run: |
           pip install mlflow==2.19.0 pandas scikit-learn numpy joblib
 
       # ------------------------------------------------------------------ #
-      # Step 5: Jalankan MLflow Project
+      # Step 4: Jalankan MLflow Project
       # ------------------------------------------------------------------ #
       - name: Run MLflow Project
-        shell: bash -l {0}
         run: |
           mlflow run MLProject/ \
             -P n_estimators=200 \
@@ -57,41 +45,42 @@ jobs:
             --experiment-name "Heart-Disease-CI"
 
       # ------------------------------------------------------------------ #
-      # Step 6: Upload artefak model ke GitHub (sebagai Actions artifact)
+      # Step 5: Upload artefak model ke GitHub (Actions artifact) — v4
       # ------------------------------------------------------------------ #
       - name: Upload Model Artifact to GitHub
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: heart-disease-model-${{ github.run_number }}
           path: mlruns/
           retention-days: 30
 
       # ------------------------------------------------------------------ #
-      # Step 7: Build Docker Image menggunakan mlflow models build-docker
+      # Step 6: Build Docker Image menggunakan mlflow models build-docker
       # ------------------------------------------------------------------ #
       - name: Build Docker Image
-        shell: bash -l {0}
         run: |
-          # Ambil run_id terbaru dari mlruns
-          RUN_ID=$(ls -t mlruns/0/ | grep -v 'meta.yaml' | head -1)
+          # Cari experiment ID dan run_id terbaru
+          EXP_ID=$(ls mlruns/ | grep -v '0' | head -1)
+          RUN_ID=$(ls -t mlruns/$EXP_ID/ | grep -v 'meta.yaml' | grep -v 'datasets' | head -1)
+          echo "Experiment ID: $EXP_ID"
           echo "Run ID: $RUN_ID"
           # Build docker image dari model MLflow
           mlflow models build-docker \
-            -m "mlruns/0/$RUN_ID/artifacts/model" \
+            -m "mlruns/$EXP_ID/$RUN_ID/artifacts/model" \
             -n "${{ secrets.DOCKER_USERNAME }}/heart-disease-model:latest" \
             --enable-mlserver
 
       # ------------------------------------------------------------------ #
-      # Step 8: Login ke Docker Hub
+      # Step 7: Login ke Docker Hub
       # ------------------------------------------------------------------ #
       - name: Login to Docker Hub
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       # ------------------------------------------------------------------ #
-      # Step 9: Push Docker Image ke Docker Hub
+      # Step 8: Push Docker Image ke Docker Hub
       # ------------------------------------------------------------------ #
       - name: Push Docker Image
         run: |
@@ -103,7 +92,7 @@ jobs:
           cat MLProject/docker_hub_link.txt
 
       # ------------------------------------------------------------------ #
-      # Step 10: Commit docker_hub_link.txt ke repo
+      # Step 9: Commit docker_hub_link.txt ke repo
       # ------------------------------------------------------------------ #
       - name: Commit Docker Hub Link
         run: |
