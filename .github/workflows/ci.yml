@@ -6,6 +6,9 @@ on:
       - main
   workflow_dispatch:  # Trigger manual
 
+permissions:
+  contents: write
+
 jobs:
   train-model:
     name: Training + Upload Artefak + Docker Hub
