@@ -27,7 +27,7 @@ jobs:
           python-version: '3.12'
 
       # ------------------------------------------------------------------ #
-      # Step 3: Install MLflow dan dependencies (tanpa Conda agar lebih cepat)
+      # Step 3: Install MLflow dan dependencies
       # ------------------------------------------------------------------ #
       - name: Install Dependencies
         run: |
@@ -45,7 +45,18 @@ jobs:
             --experiment-name "Heart-Disease-CI"
 
       # ------------------------------------------------------------------ #
-      # Step 5: Upload artefak model ke GitHub (Actions artifact) — v4
+      # Step 5: Debug - tampilkan struktur mlruns
+      # ------------------------------------------------------------------ #
+      - name: Debug mlruns structure
+        run: |
+          echo "=== Struktur mlruns ==="
+          find mlruns -type f -name "*.yaml" | head -20
+          echo ""
+          echo "=== Daftar folder di mlruns ==="
+          ls -la mlruns/
+
+      # ------------------------------------------------------------------ #
+      # Step 6: Upload artefak model ke GitHub (Actions artifact)
       # ------------------------------------------------------------------ #
       - name: Upload Model Artifact to GitHub
         uses: actions/upload-artifact@v4
@@ -55,23 +66,46 @@ jobs:
           retention-days: 30
 
       # ------------------------------------------------------------------ #
-      # Step 6: Build Docker Image menggunakan mlflow models build-docker
+      # Step 7: Cari model path & Build Docker Image
       # ------------------------------------------------------------------ #
       - name: Build Docker Image
         run: |
-          # Cari experiment ID dan run_id terbaru
-          EXP_ID=$(ls mlruns/ | grep -v '0' | head -1)
-          RUN_ID=$(ls -t mlruns/$EXP_ID/ | grep -v 'meta.yaml' | grep -v 'datasets' | head -1)
-          echo "Experiment ID: $EXP_ID"
-          echo "Run ID: $RUN_ID"
-          # Build docker image dari model MLflow
+          # Gunakan Python untuk cari model path yang benar
+          MODEL_PATH=$(python << 'EOF'
+          import os, sys
+
+          mlruns_dir = "mlruns"
+          # Iterasi semua experiment folder (kecuali '0' = Default)
+          for exp_id in sorted(os.listdir(mlruns_dir)):
+              if exp_id == "0" or not os.path.isdir(os.path.join(mlruns_dir, exp_id)):
+                  continue
+              exp_path = os.path.join(mlruns_dir, exp_id)
+              # Iterasi semua run di experiment ini
+              for run_id in os.listdir(exp_path):
+                  if run_id in ("meta.yaml", "datasets") or not os.path.isdir(os.path.join(exp_path, run_id)):
+                      continue
+                  artifact_model = os.path.join(exp_path, run_id, "artifacts", "model")
+                  if os.path.exists(artifact_model):
+                      print(f"{exp_id}/{run_id}")
+                      sys.exit(0)
+          # Fallback: cari di mana saja ada folder 'model' di artifacts
+          for root, dirs, files in os.walk(mlruns_dir):
+              if os.path.basename(root) == "model" and "MLmodel" in files:
+                  parts = root.replace("mlruns/", "").split("/")
+                  if len(parts) >= 3:
+                      print(f"{parts[0]}/{parts[1]}")
+                      sys.exit(0)
+          EOF
+          )
+          echo "Found model at: mlruns/$MODEL_PATH/artifacts/model"
+          # Build docker image
           mlflow models build-docker \
-            -m "mlruns/$EXP_ID/$RUN_ID/artifacts/model" \
+            -m "mlruns/$MODEL_PATH/artifacts/model" \
             -n "${{ secrets.DOCKER_USERNAME }}/heart-disease-model:latest" \
             --enable-mlserver
 
       # ------------------------------------------------------------------ #
-      # Step 7: Login ke Docker Hub
+      # Step 8: Login ke Docker Hub
       # ------------------------------------------------------------------ #
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -80,19 +114,17 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       # ------------------------------------------------------------------ #
-      # Step 8: Push Docker Image ke Docker Hub
+      # Step 9: Push Docker Image ke Docker Hub
       # ------------------------------------------------------------------ #
       - name: Push Docker Image
         run: |
           docker push ${{ secrets.DOCKER_USERNAME }}/heart-disease-model:latest
-          echo "Docker image berhasil di-push ke:"
-          echo "https://hub.docker.com/r/${{ secrets.DOCKER_USERNAME }}/heart-disease-model"
-          # Simpan link Docker Hub
+          echo "Docker image berhasil di-push!"
           echo "https://hub.docker.com/r/${{ secrets.DOCKER_USERNAME }}/heart-disease-model" > MLProject/docker_hub_link.txt
           cat MLProject/docker_hub_link.txt
 
       # ------------------------------------------------------------------ #
-      # Step 9: Commit docker_hub_link.txt ke repo
+      # Step 10: Commit docker_hub_link.txt ke repo
       # ------------------------------------------------------------------ #
       - name: Commit Docker Hub Link
         run: |
